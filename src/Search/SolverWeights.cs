@@ -22,10 +22,6 @@ internal static class SolverWeights
     // higher than one point of raw damage while the actual HP payment remains in the base score.
     public const int CurrentEnergyBeamCap = 6;
     public const double CurrentEnergyBeamValue = 60_000d;
-    public const int ExactStatesPerProjectedShuffleOrder = 1;
-    public const int PotionEndTurnExactStatesPerProjectedShuffleOrder = 3;
-    public const int OrderedPileVariantsPerTacticalState = 24;
-    public const int PocketwatchParetoCandidatesPerCadence = 32;
     // 持续能力按真实组合逐步增值。旧的总值 3 点封顶会让 Echo Form、Curious、Buffer
     // 任意一个生效后立刻饱和，Beam 无法区分完整成长引擎和单张能力。
     public const int PersistentBuffDeltaBeamCap = 32;

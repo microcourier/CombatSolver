@@ -68,7 +68,7 @@ internal sealed partial class UnattendedTestRunner
         AssertRitsuExtendedCapabilityFastPaths(player);
         AssertRitsuCapabilityFastPath(simulator, player, card);
         AssertChoiceKeyCache(simulator, player, card);
-        AssertIdentityChangingChoiceEnumeratesPhysicalOccurrences(combat, player);
+        AssertIdentityChangingChoiceKeepsCanonicalOccurrence(combat, player);
         AssertChoiceTokenSurvivesStateMutation(combat, player, card);
         AssertNestedAutoPlayChoiceSuspendsOuterCompletion(combat, player);
         AssertEnchantmentNestedChoiceSuspendsAcrossFork(combat, player);
@@ -401,7 +401,7 @@ internal sealed partial class UnattendedTestRunner
             throw new InvalidOperationException("选牌令牌没有在卡牌状态变化后保持实体身份。");
     }
 
-    private static void AssertIdentityChangingChoiceEnumeratesPhysicalOccurrences(
+    private static void AssertIdentityChangingChoiceKeepsCanonicalOccurrence(
         CombatState combat,
         Player player)
     {
@@ -441,11 +441,11 @@ internal sealed partial class UnattendedTestRunner
         int[] optionOccurrences = persistentChoices
             .Select(choice => choice.Cards.Single().OptionOccurrence)
             .ToArray();
-        if (!sourceOccurrences.SequenceEqual([0, copyCount - 1])
-            || !optionOccurrences.SequenceEqual([0, copyCount - 1]))
+        if (!sourceOccurrences.SequenceEqual([0])
+            || !optionOccurrences.SequenceEqual([0]))
         {
             throw new InvalidOperationException(
-                $"持久身份选牌没有保留稳定的首尾物理代表：" +
+                $"持久选牌没有保留唯一首实体代表：" +
                 $"source={string.Join(',', sourceOccurrences)}；" +
                 $"option={string.Join(',', optionOccurrences)}。");
         }
@@ -454,13 +454,13 @@ internal sealed partial class UnattendedTestRunner
                 persistentChoices,
                 persistentSpec.Effect,
                 semanticLimit: 1);
-        if (replayLimitedPersistentChoices.Count != 2
+        if (replayLimitedPersistentChoices.Count != 1
             || !replayLimitedPersistentChoices
                 .Select(choice => choice.Cards.Single().SourceOccurrence)
-                .SequenceEqual([0, copyCount - 1]))
+                .SequenceEqual([0]))
         {
             throw new InvalidOperationException(
-                "重放层的初始分支限额再次截断了持久身份 occurrence 代表。");
+                "重放层重新加入了额外实体代表。");
         }
 
         CardChoiceSpec ordinarySpec = persistentSpec with { Effect = PlanChoiceEffect.Discard };
@@ -529,16 +529,16 @@ internal sealed partial class UnattendedTestRunner
             .Select(choice => choice.Cards.Single().SourceOccurrence)
             .Order()
             .ToArray();
-        if (saturatedChoices.Count != 4
+        if (saturatedChoices.Count != 3
             || saturatedChoices.Select(choice => choice.Cards.Single().StateKey).Distinct().Count() != 3
             || saturatedChoices.Take(3)
                 .Select(choice => choice.Cards.Single().StateKey)
                 .Distinct()
                 .Count() != 3
-            || !repeatedOccurrences.SequenceEqual([0, 3]))
+            || !repeatedOccurrences.SequenceEqual([0]))
         {
             throw new InvalidOperationException(
-                $"持久身份选牌没有在不丢失语义分支的有界保留量内保留物理代表：" +
+                $"持久选牌没有仅保留全部不同语义的首实体代表：" +
                 $"count={saturatedChoices.Count}，states=" +
                 $"{saturatedChoices.Select(choice => choice.Cards.Single().StateKey).Distinct().Count()}，" +
                 $"occurrences={string.Join(',', repeatedOccurrences)}。");
@@ -560,7 +560,7 @@ internal sealed partial class UnattendedTestRunner
             displayNames,
             maxPileBranches: 3,
             maxHandBranches: 3);
-        if (semanticFirstChoices.Count != 4
+        if (semanticFirstChoices.Count != 3
             || semanticFirstChoices.Take(3)
                 .Select(choice => choice.Cards.Single().StateKey)
                 .Distinct(StringComparer.Ordinal)
@@ -570,20 +570,20 @@ internal sealed partial class UnattendedTestRunner
                     == ModelDb.Card<DefendDefect>().Id.Entry)
                 .Select(choice => choice.Cards.Single().SourceOccurrence)
                 .Order()
-                .SequenceEqual([0, 1]) == false)
+                .SequenceEqual([0]) == false)
         {
             throw new InvalidOperationException(
-                "identity 组合生成在语义截断前保留了 A#0/A#1，却永久丢失了唯一 B/C 分支。");
+                "持久选牌保留了重复 A 实体，或丢失了唯一 B/C 语义分支。");
         }
         IReadOnlyList<PlanCardChoice> saturatedLayerChoices =
             CardChoiceSupport.TakeChoicesWithIdentityOccurrenceReserve(
                 saturatedChoices,
                 saturatedSpec.Effect,
                 semanticLimit: 3);
-        if (saturatedLayerChoices.Count != 4
+        if (saturatedLayerChoices.Count != 3
             || CardChoiceSupport.AddIdentityOccurrenceBranchReserve(
                 saturatedSpec.Effect,
-                branchLimit: 3) != 5
+                branchLimit: 3) != 3
             || CardChoiceSupport.AddIdentityOccurrenceBranchReserve(
                 ordinarySpec.Effect,
                 branchLimit: 3) != 3
@@ -592,12 +592,14 @@ internal sealed partial class UnattendedTestRunner
                 int.MaxValue) != int.MaxValue)
         {
             throw new InvalidOperationException(
-                "持久身份选牌的层级 +2 保留量没有保持有界或语义安全。");
+                "持久选牌层级预算重新加入了额外实体名额。");
         }
 
         int[] replayCountsBefore = copies.Select(copy => copy.Preview.BaseReplayCount).ToArray();
-        PlanCardChoice tailChoice = persistentChoices.Single(choice =>
-            choice.Cards.Single().SourceOccurrence == copyCount - 1);
+        // Explicit recorded/user choices still address the exact entity; only search enumeration shrinks.
+        PlanCardChoice tailChoice = new(persistentSpec.Effect, PileType.Hand,
+            [new PlanCardToken(copies[^1].Preview.Id.Entry, copies[^1].Preview.CurrentUpgradeLevel,
+                CardChoiceSupport.ChoiceCardKey(copies[^1]), copyCount - 1, copyCount - 1, "tail")]);
         PredictedCard transfigure = PredictedCard.Create(ModelDb.Card<Transfigure>(), player);
         CardChoiceSupport.Apply(simulator, simulatedCombat, transfigure, tailChoice);
         for (int index = 0; index < copies.Count; index++)

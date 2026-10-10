@@ -1608,8 +1608,6 @@ internal sealed partial class UnattendedTestRunner
             stateKey: default,
             unorderedPileKey: default,
             cycleShapeKey: default,
-            projectedShuffleOrderKey: default,
-            projectedShuffleOrderValue: 0,
             hasRisk: false,
             playerDead: false,
             allEnemiesDead: false,

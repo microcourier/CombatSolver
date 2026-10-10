@@ -799,10 +799,10 @@ internal sealed partial class CombatBeamSolver
             snapshot.HasRisk, snapshot.BoundaryReason, false, null,
             snapshot, CombatProgressState.Capture(snapshot))).ToList();
         List<SearchNode> narrow = Retention.RankBest(nodes, 6, preserveDefensiveRoute: true);
-        if (narrow.Count is < 6 or > 7
+        if (narrow.Count != 6
             || narrow.Distinct(ReferenceEqualityComparer.Instance).Count() != narrow.Count
             || narrow.Any(node => !nodes.Contains(node)))
-            throw new InvalidOperationException("Narrow ordered-pile retention exceeded its capacity or lost candidate identity.");
+            throw new InvalidOperationException("Narrow retention exceeded its configured width or lost candidate identity.");
         List<SearchNode> full = Retention.RankBest(nodes, nodes.Count, preserveDefensiveRoute: true);
         if (full.Count != nodes.Count)
             throw new InvalidOperationException("An unsaturated retention channel lost candidates.");

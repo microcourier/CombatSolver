@@ -19,16 +19,13 @@ internal sealed record CardChoiceSpec(
     double ReplacementValue,
     string ContextId = "",
     int? MaxBranches = null,
-    bool IsImplicitAllSelection = false,
-    bool PreserveOrderedRoutingResidues = false);
+    bool IsImplicitAllSelection = false);
 
 internal static partial class CardChoiceSupport
 {
-    // Reserve only a very small number of physical representatives when the result can depend on
-    // which equal-looking card was selected. We prefer replacing a duplicate semantic selection,
-    // but may use this bounded overflow rather than erase the only copy of a different decision.
-    // An equivalence class with many copies therefore still cannot multiply the whole frontier.
-    internal const int MaximumIdentityOccurrenceReservedBranches = 2;
+    // Physical-occurrence alternatives are deliberately excluded from search.
+    internal const int MaximumIdentityOccurrenceReservedBranches = 0;
+
     /// <summary>
     /// 会自己离场的牌在移除排序里加的偏置。取值只要大过任何一张牌的估值即可，作用是让它排到
     /// 最后，而不是与普通牌按数值竞争。
@@ -257,31 +254,10 @@ internal static partial class CardChoiceSupport
         string[] orderedSemanticKeys = ordered
             .Select(ChoiceCardKey)
             .ToArray();
-        // Removing equal cards from separate runs changes the remaining ordered pile.
-        // Adjacent equal copies still produce the same routing result and can share a branch.
-        Dictionary<PredictedCard, int>? routingRuns = null;
-        if (spec.PreserveOrderedRoutingResidues && exactSingleCardRouting
-            && spec.Effect is PlanChoiceEffect.MoveToHand or PlanChoiceEffect.MoveToDrawTop
-                or PlanChoiceEffect.MoveToHandFreeThisTurn
-            && spec.SourcePile is PileType.Draw or PileType.Discard or PileType.Exhaust)
-        {
-            routingRuns = new(ReferenceEqualityComparer.Instance);
-            string? previousKey = null;
-            int run = -1;
-            foreach (PredictedCard card in spec.SourceCards)
-            {
-                string key = ChoiceCardKey(card);
-                if (key != previousKey) run++;
-                // Repeated references in diagnostic specs resolve to their first source position.
-                routingRuns.TryAdd(card, run);
-                previousKey = key;
-            }
-        }
         // The nearest equal semantic key answers the recursion's original [start, i)
         // duplicate test without rescanning that range at every combination depth.
         Span<int> previousEqualIndex = ordered.Count <= 128
             ? stackalloc int[ordered.Count] : new int[ordered.Count];
-        bool hasRepeatedOptions = false;
         for (int index = 0; index < ordered.Count; index++)
         {
             previousEqualIndex[index] = -1;
@@ -289,10 +265,7 @@ internal static partial class CardChoiceSupport
             {
                 if (!string.Equals(orderedSemanticKeys[prior], orderedSemanticKeys[index], StringComparison.Ordinal))
                     continue;
-                if (routingRuns != null && routingRuns[ordered[prior]] != routingRuns[ordered[index]])
-                    continue;
                 previousEqualIndex[index] = prior;
-                hasRepeatedOptions = true;
                 break;
             }
         }
@@ -330,30 +303,12 @@ internal static partial class CardChoiceSupport
                 .Take(effectiveBranchLimit - retained.Count));
         }
 
-        // With unique option keys, every combination already has a unique semantic
-        // identity. No alternate physical representative can exist for any selection.
-        bool needsOccurrenceRepresentatives = hasRepeatedOptions
-            && IsIdentityChangingPersistentChoiceEffect(spec.Effect);
-        if (needsOccurrenceRepresentatives)
-        {
-            ReserveIdentityOccurrenceRepresentatives(
-                spec,
-                retained,
-                effectiveBranchLimit,
-                MaximumIdentityOccurrenceReservedBranches);
-        }
-
-        IEnumerable<IReadOnlyList<PredictedCard>> orderedRetained = retained
-            .OrderByDescending(selection => ChoicePriority(spec, selection));
-        if (needsOccurrenceRepresentatives)
-            orderedRetained = OrderSemanticSelectionsBeforeOccurrenceSupplements(orderedRetained);
-
         // A physical card's token is immutable while this choice set is built. Multi-card
         // branches often select it repeatedly; preserve its exact source/option occurrence
         // while sharing only the resulting value, never a cache across calls or mutations.
         Dictionary<PredictedCard, PlanCardToken>? tokensByCard = maxTake > 1 && retained.Count > 1
             ? new(ReferenceEqualityComparer.Instance) : null;
-        return orderedRetained
+        return retained.OrderByDescending(selection => ChoicePriority(spec, selection))
             .Take(spec.MaxBranches ?? int.MaxValue)
             .Select(selection => new PlanCardChoice(
                 spec.Effect,
@@ -381,59 +336,26 @@ internal static partial class CardChoiceSupport
     {
         if (branchLimit < 1)
             throw new ArgumentOutOfRangeException(nameof(branchLimit));
-        if (branchLimit == int.MaxValue
-            || !IsIdentityChangingPersistentChoiceEffect(effect))
-        {
-            return branchLimit;
-        }
-        return branchLimit > int.MaxValue - MaximumIdentityOccurrenceReservedBranches
-            ? int.MaxValue
-            : branchLimit + MaximumIdentityOccurrenceReservedBranches;
+        return branchLimit;
     }
 
-    /// <summary>
-    /// Applies a semantic layer limit without allowing a physical-occurrence supplement to take
-    /// the place of a distinct decision. Supplements whose canonical choice survived may use the
-    /// same bounded +2 reserve as <see cref="BuildChoices"/>.
-    /// </summary>
+    /// <summary>Keep one physical representative per semantic choice, within the layer limit.</summary>
     internal static IReadOnlyList<PlanCardChoice> TakeChoicesWithIdentityOccurrenceReserve(
         IReadOnlyList<PlanCardChoice> choices,
         PlanChoiceEffect effect,
         int semanticLimit,
         int occurrenceReserveLimit = MaximumIdentityOccurrenceReservedBranches)
     {
-        if (semanticLimit < 1)
-            throw new ArgumentOutOfRangeException(nameof(semanticLimit));
-        if (occurrenceReserveLimit < 0
-            || occurrenceReserveLimit > MaximumIdentityOccurrenceReservedBranches)
-        {
-            throw new ArgumentOutOfRangeException(nameof(occurrenceReserveLimit));
-        }
-        if (choices.Count <= semanticLimit)
-            return choices;
+        if (semanticLimit < 1) throw new ArgumentOutOfRangeException(nameof(semanticLimit));
+        if (occurrenceReserveLimit != 0) throw new ArgumentOutOfRangeException(nameof(occurrenceReserveLimit));
         if (!IsIdentityChangingPersistentChoiceEffect(effect))
             return choices.Take(semanticLimit).ToList();
-
         List<PlanCardChoice> retained = [];
         foreach (PlanCardChoice choice in choices)
         {
-            if (retained.Count >= semanticLimit)
-                break;
             if (!retained.Any(existing => SameSemanticChoice(existing, choice)))
                 retained.Add(choice);
-        }
-        int maximumRetained = semanticLimit > int.MaxValue - occurrenceReserveLimit
-            ? int.MaxValue
-            : semanticLimit + occurrenceReserveLimit;
-        foreach (PlanCardChoice candidate in choices)
-        {
-            if (retained.Count >= maximumRetained)
-                break;
-            if (!retained.Contains(candidate)
-                && retained.Any(existing => SameSemanticChoice(existing, candidate)))
-            {
-                retained.Add(candidate);
-            }
+            if (retained.Count == semanticLimit) break;
         }
         return retained;
     }
@@ -447,28 +369,6 @@ internal static partial class CardChoiceSupport
                 representatives.Add(choice);
         }
         return representatives.Count;
-    }
-
-    private static IReadOnlyList<IReadOnlyList<PredictedCard>>
-        OrderSemanticSelectionsBeforeOccurrenceSupplements(
-            IEnumerable<IReadOnlyList<PredictedCard>> selections)
-    {
-        List<IReadOnlyList<PredictedCard>> semanticRepresentatives = [];
-        List<IReadOnlyList<PredictedCard>> occurrenceSupplements = [];
-        foreach (IReadOnlyList<PredictedCard> selection in selections)
-        {
-            if (semanticRepresentatives.Any(candidate =>
-                    SameSemanticSelection(candidate, selection)))
-            {
-                occurrenceSupplements.Add(selection);
-            }
-            else
-            {
-                semanticRepresentatives.Add(selection);
-            }
-        }
-        semanticRepresentatives.AddRange(occurrenceSupplements);
-        return semanticRepresentatives;
     }
 
     internal static bool SameSemanticChoice(PlanCardChoice left, PlanCardChoice right)
@@ -492,262 +392,6 @@ internal static partial class CardChoiceSupport
             {
                 return false;
             }
-        }
-        return true;
-    }
-
-    private readonly record struct IdentityOccurrenceSupplement(
-        IReadOnlyList<PredictedCard> Canonical,
-        IReadOnlyList<PredictedCard> Representative);
-
-    private static void ReserveIdentityOccurrenceRepresentatives(
-        CardChoiceSpec spec,
-        List<IReadOnlyList<PredictedCard>> retained,
-        int branchLimit,
-        int reservedLimit)
-    {
-        if (reservedLimit <= 0 || branchLimit <= 0)
-            return;
-
-        IReadOnlyList<IdentityOccurrenceSupplement> supplements =
-            BuildIdentityOccurrenceSupplements(spec, retained, reservedLimit);
-        int maximumRetained = branchLimit > int.MaxValue - reservedLimit
-            ? int.MaxValue
-            : branchLimit + reservedLimit;
-        List<IReadOnlyList<PredictedCard>> admittedCanonicals = [];
-        List<IReadOnlyList<PredictedCard>> admittedRepresentatives = [];
-        foreach (IdentityOccurrenceSupplement supplement in supplements)
-        {
-            if (!retained.Any(candidate =>
-                    SamePhysicalSelection(candidate, supplement.Canonical)))
-            {
-                continue;
-            }
-
-            if (retained.Count >= branchLimit)
-            {
-                int evictionIndex = FindIdentityOccurrenceEvictionCandidate(
-                    spec,
-                    retained,
-                    admittedCanonicals,
-                    admittedRepresentatives,
-                    supplement.Canonical);
-                if (evictionIndex >= 0)
-                {
-                    retained.RemoveAt(evictionIndex);
-                }
-                else if (retained.Count >= maximumRetained)
-                {
-                    continue;
-                }
-            }
-
-            int canonicalIndex = retained.FindIndex(candidate =>
-                SamePhysicalSelection(candidate, supplement.Canonical));
-            if (canonicalIndex < 0)
-                continue;
-            retained.Insert(canonicalIndex + 1, supplement.Representative);
-            admittedCanonicals.Add(supplement.Canonical);
-            admittedRepresentatives.Add(supplement.Representative);
-        }
-    }
-
-    private static IReadOnlyList<IdentityOccurrenceSupplement> BuildIdentityOccurrenceSupplements(
-        CardChoiceSpec spec,
-        IReadOnlyList<IReadOnlyList<PredictedCard>> retained,
-        int limit)
-    {
-        if (limit <= 0)
-            return [];
-
-        List<IdentityOccurrenceSupplement> supplements = [];
-        foreach (IReadOnlyList<PredictedCard> selection in retained
-                     .OrderByDescending(candidate => ChoicePriority(spec, candidate)))
-        {
-            IReadOnlyList<PredictedCard>? tailRepresentative =
-                BuildTailOccurrenceRepresentative(selection, spec.Options);
-            if (tailRepresentative == null
-                || retained.Any(candidate => SamePhysicalSelection(candidate, tailRepresentative))
-                || supplements.Any(candidate =>
-                    SamePhysicalSelection(candidate.Representative, tailRepresentative)))
-            {
-                continue;
-            }
-
-            supplements.Add(new IdentityOccurrenceSupplement(selection, tailRepresentative));
-            if (supplements.Count >= limit)
-                break;
-        }
-        return supplements;
-    }
-
-    private static int FindIdentityOccurrenceEvictionCandidate(
-        CardChoiceSpec spec,
-        IReadOnlyList<IReadOnlyList<PredictedCard>> retained,
-        IReadOnlyList<IReadOnlyList<PredictedCard>> admittedCanonicals,
-        IReadOnlyList<IReadOnlyList<PredictedCard>> admittedRepresentatives,
-        IReadOnlyList<PredictedCard> protectedCanonical)
-    {
-        int selectedIndex = -1;
-        double selectedPriority = double.PositiveInfinity;
-        for (int index = 0; index < retained.Count; index++)
-        {
-            IReadOnlyList<PredictedCard> candidate = retained[index];
-            if (SamePhysicalSelection(candidate, protectedCanonical)
-                || admittedCanonicals.Any(canonical =>
-                    SamePhysicalSelection(candidate, canonical))
-                || admittedRepresentatives.Any(representative =>
-                    SamePhysicalSelection(candidate, representative))
-                // A physical-occurrence supplement is not a substitute for a different
-                // semantic choice. Only evict when that exact decision remains represented.
-                || !HasSemanticSelectionSibling(retained, index)
-                || retained.Count(other => other.Count == candidate.Count) <= 1)
-            {
-                continue;
-            }
-
-            double priority = ChoicePriority(spec, candidate);
-            if (priority <= selectedPriority)
-            {
-                selectedIndex = index;
-                selectedPriority = priority;
-            }
-        }
-        return selectedIndex;
-    }
-
-    private static bool HasSemanticSelectionSibling(
-        IReadOnlyList<IReadOnlyList<PredictedCard>> retained,
-        int candidateIndex)
-    {
-        IReadOnlyList<PredictedCard> candidate = retained[candidateIndex];
-        for (int index = 0; index < retained.Count; index++)
-        {
-            if (index != candidateIndex
-                && SameSemanticSelection(candidate, retained[index]))
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static bool SameSemanticSelection(
-        IReadOnlyList<PredictedCard> left,
-        IReadOnlyList<PredictedCard> right)
-    {
-        if (left.Count != right.Count)
-            return false;
-        for (int index = 0; index < left.Count; index++)
-        {
-            if (!string.Equals(
-                    ChoiceCardKey(left[index]),
-                    ChoiceCardKey(right[index]),
-                    StringComparison.Ordinal))
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static IReadOnlyList<PredictedCard>? BuildTailOccurrenceRepresentative(
-        IReadOnlyList<PredictedCard> selection,
-        IReadOnlyList<PredictedCard> options)
-    {
-        // Bound the quadratic selected-key scan for unusually large pile selections.
-        // The grouped path is the original implementation; normal hands use direct lookup.
-        if (selection.Count > 16)
-            return BuildTailOccurrenceRepresentativeGrouped(selection, options);
-        PredictedCard[]? representative = null;
-        for (int index = 0; index < selection.Count; index++)
-        {
-            string key = ChoiceCardKey(selection[index]);
-            // The j-th selected occurrence of a key maps to the j-th item of the
-            // last N options with that key. Count from the right to locate it directly,
-            // preserving order and multiplicity even when option references repeat.
-            int remaining = 0;
-            for (int later = index + 1; later < selection.Count; later++)
-                if (string.Equals(ChoiceCardKey(selection[later]), key, StringComparison.Ordinal))
-                    remaining++;
-            PredictedCard? mapped = null;
-            for (int option = options.Count - 1; option >= 0; option--)
-            {
-                if (!string.Equals(ChoiceCardKey(options[option]), key, StringComparison.Ordinal))
-                    continue;
-                if (remaining-- != 0)
-                    continue;
-                mapped = options[option];
-                break;
-            }
-            if (mapped is null)
-                return null;
-            if (ReferenceEquals(mapped, selection[index]))
-                continue;
-            representative ??= selection.ToArray();
-            representative[index] = mapped;
-        }
-        // No replacement means the existing physical selection is already the tail.
-        return representative;
-    }
-
-    private static IReadOnlyList<PredictedCard>? BuildTailOccurrenceRepresentativeGrouped(
-        IReadOnlyList<PredictedCard> selection,
-        IReadOnlyList<PredictedCard> options)
-    {
-        if (selection.Count == 0)
-            return null;
-
-        Dictionary<string, int> selectedCounts = new(StringComparer.Ordinal);
-        foreach (PredictedCard card in selection)
-        {
-            string key = ChoiceCardKey(card);
-            selectedCounts[key] = selectedCounts.GetValueOrDefault(key) + 1;
-        }
-
-        Dictionary<string, PredictedCard[]> tailByKey = new(StringComparer.Ordinal);
-        bool hasDifferentRepresentative = false;
-        foreach ((string key, int count) in selectedCounts)
-        {
-            PredictedCard[] equivalentOptions = options
-                .Where(option => string.Equals(ChoiceCardKey(option), key, StringComparison.Ordinal))
-                .ToArray();
-            if (equivalentOptions.Length < count)
-                return null;
-
-            PredictedCard[] tail = equivalentOptions[^count..];
-            tailByKey[key] = tail;
-            PredictedCard[] selectedForKey = selection
-                .Where(card => string.Equals(ChoiceCardKey(card), key, StringComparison.Ordinal))
-                .ToArray();
-            hasDifferentRepresentative |= !SamePhysicalSelection(selectedForKey, tail);
-        }
-        if (!hasDifferentRepresentative)
-            return null;
-
-        Dictionary<string, int> offsets = new(StringComparer.Ordinal);
-        PredictedCard[] representative = new PredictedCard[selection.Count];
-        for (int index = 0; index < selection.Count; index++)
-        {
-            string key = ChoiceCardKey(selection[index]);
-            int offset = offsets.GetValueOrDefault(key);
-            representative[index] = tailByKey[key][offset];
-            offsets[key] = offset + 1;
-        }
-        return representative;
-    }
-
-
-    private static bool SamePhysicalSelection(
-        IReadOnlyList<PredictedCard> left,
-        IReadOnlyList<PredictedCard> right)
-    {
-        if (left.Count != right.Count)
-            return false;
-        for (int index = 0; index < left.Count; index++)
-        {
-            if (!ReferenceEquals(left[index], right[index]))
-                return false;
         }
         return true;
     }
@@ -929,7 +573,6 @@ internal static partial class CardChoiceSupport
 
     // A completed selection is immutable and belongs to exactly one BuildChoices call.
     // Lazy scoring preserves paths that never inspect a priority (including Take(0)).
-    // Identity supplements create their own selections and use the original evaluator.
     private sealed class ScoredCardSelection(PredictedCard[] cards) : IReadOnlyList<PredictedCard>
     {
         private bool _hasPriority;

@@ -515,26 +515,13 @@ internal sealed partial class CombatBeamSolver
                     : best);
 
         private static SearchNode? FindBestCuratedTurnBoundaryHand(IEnumerable<SearchNode> nodes)
-            => nodes.Aggregate(
-                (SearchNode?)null,
-                (best, node) => best == null
-                    || node.Snapshot.ProjectedPlayerHp > best.Snapshot.ProjectedPlayerHp
-                    || node.Snapshot.ProjectedPlayerHp == best.Snapshot.ProjectedPlayerHp
-                        && (node.Snapshot.OstyHp > best.Snapshot.OstyHp
-                            || node.Snapshot.OstyHp == best.Snapshot.OstyHp
-                                && (node.Snapshot.ProjectedShuffleOrderValue
-                                        > best.Snapshot.ProjectedShuffleOrderValue
-                                    || node.Snapshot.ProjectedShuffleOrderValue
-                                        == best.Snapshot.ProjectedShuffleOrderValue
-                                        && (node.Snapshot.ReachableHandValue > best.Snapshot.ReachableHandValue
-                                            || node.Snapshot.ReachableHandValue == best.Snapshot.ReachableHandValue
-                                                && (node.Snapshot.HandCount < best.Snapshot.HandCount
-                                                    || node.Snapshot.HandCount == best.Snapshot.HandCount
-                                                        && (node.Snapshot.EnemyHp < best.Snapshot.EnemyHp
-                                                            || node.Snapshot.EnemyHp == best.Snapshot.EnemyHp
-                                                                && node.Score > best.Score)))))
-                    ? node
-                    : best);
+            => nodes.OrderByDescending(node => node.Snapshot.ProjectedPlayerHp)
+                .ThenByDescending(node => node.Snapshot.OstyHp)
+                .ThenByDescending(node => node.Snapshot.ReachableHandValue)
+                .ThenBy(node => node.Snapshot.HandCount)
+                .ThenBy(node => node.Snapshot.EnemyHp)
+                .ThenByDescending(node => node.Score)
+                .FirstOrDefault();
 
         private SearchNode? FindBestCompressionAttackGrowth(IReadOnlyList<SearchNode> nodes)
         {

@@ -699,7 +699,6 @@ internal sealed partial class CombatBeamSolver
                 SnapshotMetric = _run.Performance.Snapshot(SearchMetricPhase.Snapshot),
                 ThreatProjectionMetric = _run.Performance.Snapshot(SearchMetricPhase.ThreatProjection),
                 FingerprintMetric = _run.Performance.Snapshot(SearchMetricPhase.Fingerprint),
-                ProjectedShuffleMetric = _run.Performance.Snapshot(SearchMetricPhase.ProjectedShuffle),
                 PileFingerprintMetric = _run.Performance.Snapshot(SearchMetricPhase.PileFingerprint),
                 PileFingerprintMissMetric = _run.Performance.Snapshot(SearchMetricPhase.PileFingerprintMiss),
                 CardFingerprintMissMetric = _run.Performance.Snapshot(SearchMetricPhase.CardFingerprintMiss),

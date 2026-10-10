@@ -2109,8 +2109,7 @@ internal sealed partial class CombatBeamSolver
             .Select(group =>
                 $"p{group.Key.PotionCount}/{group.Key.FirstCardId}:{group.Count()}:" +
                 $"hp{group.Max(node => node.Snapshot.ProjectedPlayerHp)}:" +
-                $"setup{group.Max(node => node.Snapshot.StrategicEffects.RetentionValue)}:" +
-                $"order{group.Max(node => node.Snapshot.ProjectedShuffleOrderValue)}"));
+                $"setup{group.Max(node => node.Snapshot.StrategicEffects.RetentionValue)}"));
         return string.IsNullOrEmpty(summary) ? "-" : summary;
     }
 

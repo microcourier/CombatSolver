@@ -147,6 +147,9 @@ internal sealed partial class UnattendedTestRunner
             {
                 runner.SetStage("choice_token_contract");
                 runner._completedChecks.Add(AssertChoiceTokenContract(scenario.Player));
+                AssertIdentityChangingChoiceKeepsCanonicalOccurrence(scenario.CombatState, scenario.Player);
+                CombatBeamSolver.VerifyChoiceReplayBranchBudgetPolicyForTesting();
+                runner._completedChecks.Add("CanonicalChoices:ExactTokens:DistinctSemantics:ZeroOccurrenceReserve");
             }
             if (request.ScenarioId == "GENERATION-HISTORY-CONTRACT")
             {
