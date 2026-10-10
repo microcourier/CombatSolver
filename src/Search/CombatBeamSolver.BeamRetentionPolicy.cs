@@ -446,7 +446,6 @@ internal sealed partial class CombatBeamSolver
         private const int PersistentRoutingContextRounds = 8;
         private const int RoutingChoiceLimit = 96;
         private const int AmbiguousCompressedChoiceLimit = 48;
-        private sealed record OrderedPileCohort(IReadOnlyList<SearchNode> PrefixVariants);
         private readonly record struct PocketwatchCadenceSignature(
             int PotionCount,
             uint? FocusTargetCombatId,
@@ -719,7 +718,6 @@ internal sealed partial class CombatBeamSolver
             public SearchNode BestOffense = first;
             public SearchNode BestDefense = first;
             public SearchNode BestSetup = first;
-            public SearchNode BestPileOrder = first;
             public RoutingRankSummary? RankSummary;
         }
 
@@ -869,10 +867,6 @@ internal sealed partial class CombatBeamSolver
                             group.BestDefense = node;
                         if (IsBetterSetup(node, group.BestSetup))
                             group.BestSetup = node;
-                        if (node.Snapshot.ProjectedShuffleOrderValue > group.BestPileOrder.Snapshot.ProjectedShuffleOrderValue
-                            || node.Snapshot.ProjectedShuffleOrderValue == group.BestPileOrder.Snapshot.ProjectedShuffleOrderValue
-                                && IsBetterSearchNode(node, group.BestPileOrder))
-                            group.BestPileOrder = node;
                     }
                     routingNodes.Add(node);
                 }
@@ -960,7 +954,6 @@ internal sealed partial class CombatBeamSolver
                     AddRoutingCandidate(candidates, group.BestScore);
                     AddRoutingCandidate(candidates, group.BestOffense);
                     AddRoutingCandidate(candidates, group.BestDefense);
-                    AddRoutingCandidate(candidates, group.BestPileOrder);
                     paretoByContext[contextIndex] = candidates
                         .Where(candidate => !candidates.Any(other =>
                             !ReferenceEquals(candidate, other)
@@ -1058,130 +1051,9 @@ internal sealed partial class CombatBeamSolver
             }
 
             int effectiveLimit = limit;
-            bool preserveOrderedPile = preserveDefensiveRoute
-                && ranked.Any(node => node.Snapshot.PocketwatchCardThreshold >= 0);
-            int routingChoiceQuota = preserveOrderedPile
-                ? BoundedRoutingChoiceQuota(routingChoices.Count)
-                : _isActEndingBoss
-                    ? Math.Max(10, (limit + 3) / 2)
-                    : Math.Max(8, limit * 2 / 5);
-            List<OrderedPileCohort> orderedPileCohorts = [];
-            if (preserveOrderedPile)
-            {
-                List<IGrouping<StateFingerprint, SearchNode>> tacticalGroups = ranked
-                    .Where(node => node.Snapshot.PocketwatchCardThreshold >= 0)
-                    .GroupBy(BuildOrderedPileTacticalKey)
-                    .OrderByDescending(group => group.Max(BeamRankScore))
-                    .ToList();
-                List<IReadOnlyList<IGrouping<StateFingerprint, SearchNode>>> cadenceBuckets = tacticalGroups
-                    .GroupBy(group => BuildPocketwatchCadenceSignature(group.First()))
-                    .OrderByDescending(bucket => bucket.Max(group => group.Max(BeamRankScore)))
-                    .Select(bucket => (IReadOnlyList<IGrouping<StateFingerprint, SearchNode>>)bucket
-                        .OrderByDescending(group => group.Max(BeamRankScore))
-                        .ToList())
-                    .ToList();
-                List<IReadOnlyList<IReadOnlyList<IGrouping<StateFingerprint, SearchNode>>>> cadenceFamilies =
-                    cadenceBuckets
-                        .GroupBy(bucket => BuildPocketwatchCadenceFamilySignature(bucket[0].First()))
-                        .OrderByDescending(family => family.Max(bucket => bucket.Max(group => group.Max(BeamRankScore))))
-                        .Select(family => (IReadOnlyList<IReadOnlyList<IGrouping<StateFingerprint, SearchNode>>>)family
-                            .OrderByDescending(bucket => bucket.Max(group => group.Max(BeamRankScore)))
-                            .ToList())
-                        .ToList();
-                cadenceBuckets = [];
-                int cadenceRound = 0;
-                while (cadenceFamilies.Any(family => cadenceRound < family.Count))
-                {
-                    foreach (IReadOnlyList<IReadOnlyList<IGrouping<StateFingerprint, SearchNode>>> family in cadenceFamilies)
-                    {
-                        if (cadenceRound < family.Count)
-                            cadenceBuckets.Add(family[cadenceRound]);
-                    }
-                    cadenceRound++;
-                }
-                List<IReadOnlyList<IGrouping<StateFingerprint, SearchNode>>> paretoByCadence = [];
-                foreach (IReadOnlyList<IGrouping<StateFingerprint, SearchNode>> bucket in cadenceBuckets)
-                {
-                    List<IGrouping<StateFingerprint, SearchNode>> candidates = [];
-                    AddTacticalGroup(candidates, bucket[0]);
-                    AddTacticalGroup(candidates, bucket
-                        .OrderByDescending(group => group.Max(node => node.Snapshot.ProjectedPlayerHp))
-                        .ThenBy(group => group.Min(node => node.Snapshot.EnemyHp))
-                        .ThenByDescending(group => group.Max(BeamRankScore))
-                        .First());
-                    AddTacticalGroup(candidates, bucket
-                        .OrderBy(group => group.Min(node => node.Snapshot.AliveEnemyCount))
-                        .ThenBy(group => group.Min(node => node.Snapshot.EnemyHp))
-                        .ThenByDescending(group => group.Max(BeamRankScore))
-                        .First());
-                    AddTacticalGroup(candidates, bucket
-                        .OrderByDescending(group => group.Max(node =>
-                            LaneValue(node.Snapshot, SearchRouteTraits.Control)))
-                        .ThenByDescending(group => group.Max(BeamRankScore))
-                        .First());
-                    AddTacticalGroup(candidates, bucket
-                        .OrderByDescending(group => group.Max(node =>
-                            LaneValue(node.Snapshot, SearchRouteTraits.Resource)))
-                        .ThenByDescending(group => group.Max(BeamRankScore))
-                        .First());
-                    AddTacticalGroup(candidates, bucket
-                        .OrderByDescending(group =>
-                            group.Max(node => node.Snapshot.ProjectedShuffleOrderValue))
-                        .ThenByDescending(group => group.Max(BeamRankScore))
-                        .First());
-                    foreach (IGrouping<StateFingerprint, SearchNode> group in bucket)
-                    {
-                        if (candidates.Count >= SolverWeights.PocketwatchParetoCandidatesPerCadence)
-                            break;
-                        AddTacticalGroup(candidates, group);
-                    }
-                    List<IGrouping<StateFingerprint, SearchNode>> pareto = [];
-                    foreach (IGrouping<StateFingerprint, SearchNode> candidate in candidates)
-                    {
-                        bool dominated = false;
-                        foreach (IGrouping<StateFingerprint, SearchNode> other in candidates)
-                        {
-                            if (ReferenceEquals(candidate, other)
-                                || !MultiObjectiveDominates(other.First(), candidate.First()))
-                                continue;
-                            dominated = true;
-                            break;
-                        }
-                        if (!dominated)
-                            pareto.Add(candidate);
-                    }
-                    paretoByCadence.Add(pareto);
-                }
-                List<IGrouping<StateFingerprint, SearchNode>> selectedTacticalGroups = [];
-                int paretoRound = 0;
-                while (paretoByCadence.Any(bucket => paretoRound < bucket.Count))
-                {
-                    foreach (IReadOnlyList<IGrouping<StateFingerprint, SearchNode>> bucket in paretoByCadence)
-                    {
-                        if (paretoRound < bucket.Count)
-                            AddTacticalGroup(selectedTacticalGroups, bucket[paretoRound]);
-                    }
-                    paretoRound++;
-                }
-                orderedPileCohorts = selectedTacticalGroups
-                    .Select(group => new OrderedPileCohort(group
-                        .GroupBy(node => node.Snapshot.ProjectedShuffleOrderKey)
-                        .SelectMany(prefixGroup => prefixGroup
-                            .OrderByDescending(node => node.Snapshot.ProjectedShuffleOrderValue)
-                            .ThenByDescending(BeamRankScore)
-                            .Take(SolverWeights.ExactStatesPerProjectedShuffleOrder))
-                        .OrderByDescending(node => node.Snapshot.ProjectedShuffleOrderValue)
-                        .ThenByDescending(BeamRankScore)
-                        .Take(SolverWeights.OrderedPileVariantsPerTacticalState)
-                        .ToList()))
-                    .ToList();
-                int orderedPileRepresentativeCount = orderedPileCohorts.Sum(cohort => cohort.PrefixVariants.Count);
-                effectiveLimit = Math.Max(
-                    limit,
-                    Math.Min(
-                        checked(limit + Math.Min(routingChoiceQuota, routingChoices.Count) + 1),
-                        limit + orderedPileRepresentativeCount));
-            }
+            int routingChoiceQuota = _isActEndingBoss
+                ? Math.Max(10, (limit + 3) / 2)
+                : Math.Max(8, limit * 2 / 5);
 
             SearchNode? bestPotionFree = null;
             SearchNode? bestPotion = null;
@@ -1280,10 +1152,6 @@ internal sealed partial class CombatBeamSolver
                         AddRequired(required, FindBestTacticalEnabler(candidates), limit);
                         AddRequired(required, FindBestTargetPressure(candidates), limit);
                         AddRequired(required, FindBestDeckCuration(candidates), limit);
-                        AddRequired(required, candidates
-                            .OrderByDescending(node => node.Snapshot.ProjectedShuffleOrderValue)
-                            .ThenByDescending(BeamRankScore)
-                            .First(), limit);
                     }
                 }
             }
@@ -1297,66 +1165,6 @@ internal sealed partial class CombatBeamSolver
                              .OrderBy(group => group.Key))
                 {
                     AddRequired(required, FindBestTurnBoundaryHand(potionGroup), effectiveLimit);
-                }
-            }
-            int orderedPileQuota = Math.Min(effectiveLimit, orderedPileCohorts.Count == 0
-                ? 0
-                : endTurnFrontier
-                    || ranked.Any(node => node.Traits.HasFlag(SearchRouteTraits.EndTurnDeckCompression))
-                    ? Math.Max(8, limit * 2 / 3)
-                    : limit + 1);
-            int orderedPileRounds = orderedPileCohorts.Count == 0
-                ? 0
-                : orderedPileCohorts.Max(cohort => cohort.PrefixVariants.Count);
-            if (endTurnFrontier && orderedPileQuota > 0)
-            {
-                int strategicExactQuota = Math.Min(16, orderedPileQuota / 2);
-                foreach (var cadence in ranked
-                             .Where(node => node.PotionCount > 0
-                                 && node.Traits.HasFlag(SearchRouteTraits.EndTurnDeckCompression))
-                             .GroupBy(node => (
-                                 Cadence: BuildPocketwatchCadenceSignature(node),
-                                 node.Snapshot.RetainedAttackValue))
-                             .OrderByDescending(group => group.Max(node => node.Snapshot.FocusTargetPressure))
-                             .ThenBy(group => group.Min(node => node.Snapshot.FocusTargetRemainingHp))
-                             .ThenByDescending(group => group.Max(node => node.Snapshot.ProjectedShuffleOrderValue))
-                             .Take(Math.Max(1, strategicExactQuota /
-                                 SolverWeights.PotionEndTurnExactStatesPerProjectedShuffleOrder)))
-                {
-                    SearchNode? representative = FindMostCompressedDeck(cadence.ToList());
-                    if (representative == null)
-                        continue;
-                    StateFingerprint tacticalKey = BuildOrderedPileTacticalKey(representative);
-                    foreach (SearchNode exactState in cadence
-                                 .Where(node => BuildOrderedPileTacticalKey(node) == tacticalKey
-                                     && node.Snapshot.ProjectedShuffleOrderKey ==
-                                        representative.Snapshot.ProjectedShuffleOrderKey)
-                                 .OrderByDescending(BeamRankScore)
-                                 .Take(SolverWeights.PotionEndTurnExactStatesPerProjectedShuffleOrder))
-                    {
-                        AddRequired(required, exactState, strategicExactQuota);
-                    }
-                }
-            }
-            int exactStateRounds = Math.Min(
-                SolverWeights.ExactStatesPerProjectedShuffleOrder,
-                orderedPileRounds);
-            for (int round = 0; round < exactStateRounds && required.Count < orderedPileQuota; round++)
-            {
-                foreach (OrderedPileCohort cohort in orderedPileCohorts)
-                {
-                    if (round < cohort.PrefixVariants.Count)
-                        AddRequired(required, cohort.PrefixVariants[round], orderedPileQuota);
-                }
-            }
-            for (int round = exactStateRounds;
-                 round < orderedPileRounds && required.Count < orderedPileQuota;
-                 round++)
-            {
-                foreach (OrderedPileCohort cohort in orderedPileCohorts)
-                {
-                    if (round < cohort.PrefixVariants.Count)
-                        AddRequired(required, cohort.PrefixVariants[round], orderedPileQuota);
                 }
             }
             if (ranked.Any(node => node.Traits.HasFlag(SearchRouteTraits.EndTurnDeckCompression)))

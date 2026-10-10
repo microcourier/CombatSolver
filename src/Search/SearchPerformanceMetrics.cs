@@ -24,7 +24,6 @@ internal enum SearchMetricPhase
     Snapshot,
     ThreatProjection,
     Fingerprint,
-    ProjectedShuffle,
     PileFingerprint,
     PileFingerprintMiss,
     CardFingerprintMiss,

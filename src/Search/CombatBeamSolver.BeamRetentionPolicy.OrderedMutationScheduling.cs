@@ -593,7 +593,6 @@ internal sealed partial class CombatBeamSolver
             bool explorerHasDifferentParent = false;
             bool explorerHasDifferentOption = false;
             bool explorerHasDifferentPile = false;
-            bool explorerHasDifferentShuffle = false;
             long explorerParentDistance = long.MinValue;
             long explorerOutcomeDistance = long.MinValue;
             foreach (OrderedMutationContinuationPacket packet in candidates)
@@ -612,9 +611,6 @@ internal sealed partial class CombatBeamSolver
                         != qualityOption;
                     bool hasDifferentPile = candidateParent.Snapshot.UnorderedPileKey
                         != qualityLeader.Parent.Snapshot.UnorderedPileKey;
-                    bool hasDifferentShuffle =
-                        candidateParent.Snapshot.ProjectedShuffleOrderKey
-                        != qualityLeader.Parent.Snapshot.ProjectedShuffleOrderKey;
                     long parentDistance = OrderedMutationContinuationSemanticDistance(
                         qualityLeader.Parent,
                         candidateParent);
@@ -636,25 +632,17 @@ internal sealed partial class CombatBeamSolver
                             && hasDifferentParent == explorerHasDifferentParent
                             && hasDifferentOption == explorerHasDifferentOption
                             && hasDifferentPile == explorerHasDifferentPile
-                            && hasDifferentShuffle && !explorerHasDifferentShuffle
-                        || hasDifferentUniverse == explorerHasDifferentUniverse
-                            && hasDifferentParent == explorerHasDifferentParent
-                            && hasDifferentOption == explorerHasDifferentOption
-                            && hasDifferentPile == explorerHasDifferentPile
-                            && hasDifferentShuffle == explorerHasDifferentShuffle
                             && parentDistance > explorerParentDistance
                         || hasDifferentUniverse == explorerHasDifferentUniverse
                             && hasDifferentParent == explorerHasDifferentParent
                             && hasDifferentOption == explorerHasDifferentOption
                             && hasDifferentPile == explorerHasDifferentPile
-                            && hasDifferentShuffle == explorerHasDifferentShuffle
                             && parentDistance == explorerParentDistance
                             && outcomeDistance > explorerOutcomeDistance
                         || hasDifferentUniverse == explorerHasDifferentUniverse
                             && hasDifferentParent == explorerHasDifferentParent
                             && hasDifferentOption == explorerHasDifferentOption
                             && hasDifferentPile == explorerHasDifferentPile
-                            && hasDifferentShuffle == explorerHasDifferentShuffle
                             && parentDistance == explorerParentDistance
                             && outcomeDistance == explorerOutcomeDistance
                             && (explorerPacket == null
@@ -670,7 +658,6 @@ internal sealed partial class CombatBeamSolver
                         explorerHasDifferentParent = hasDifferentParent;
                         explorerHasDifferentOption = hasDifferentOption;
                         explorerHasDifferentPile = hasDifferentPile;
-                        explorerHasDifferentShuffle = hasDifferentShuffle;
                         explorerParentDistance = parentDistance;
                         explorerOutcomeDistance = outcomeDistance;
                     }

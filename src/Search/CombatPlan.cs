@@ -1161,8 +1161,6 @@ internal sealed class SimulationSnapshot(
     StateFingerprint stateKey,
     StateFingerprint unorderedPileKey,
     StateFingerprint cycleShapeKey,
-    StateFingerprint projectedShuffleOrderKey,
-    int projectedShuffleOrderValue,
     bool hasRisk,
     bool playerDead,
     bool allEnemiesDead,
@@ -1240,8 +1238,6 @@ internal sealed class SimulationSnapshot(
     public StateFingerprint StateKey { get; } = stateKey;
     public StateFingerprint UnorderedPileKey { get; } = unorderedPileKey;
     public StateFingerprint CycleShapeKey { get; } = cycleShapeKey;
-    public StateFingerprint ProjectedShuffleOrderKey { get; } = projectedShuffleOrderKey;
-    public int ProjectedShuffleOrderValue { get; } = projectedShuffleOrderValue;
     public bool HasRisk { get; } = hasRisk;
     public bool PlayerDead { get; } = playerDead;
     public bool AllEnemiesDead { get; } = allEnemiesDead;
@@ -1460,7 +1456,6 @@ internal sealed class SolverResult
     public SearchPhaseMetric SnapshotMetric { get; internal set; }
     public SearchPhaseMetric ThreatProjectionMetric { get; internal set; }
     public SearchPhaseMetric FingerprintMetric { get; internal set; }
-    public SearchPhaseMetric ProjectedShuffleMetric { get; internal set; }
     public SearchPhaseMetric PileFingerprintMetric { get; internal set; }
     public SearchPhaseMetric PileFingerprintMissMetric { get; internal set; }
     public SearchPhaseMetric CardFingerprintMissMetric { get; internal set; }

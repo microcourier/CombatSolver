@@ -180,12 +180,8 @@ internal sealed partial class CombatBeamSolver
         PrimaryChoiceMatch? UnresolvedPrimaryChoice);
 
     /// <summary>
-    /// Collects physical-identity supplements across the whole action. Non-identity layers share
-    /// this coordinator instead of pre-assigning its two slots to outer branches: a later stable
-    /// semantic branch can therefore still expose the first actual identity-sensitive frontier.
-    /// Supplements are replayed only after the semantic pass, so they can never replace a distinct
-    /// semantic decision. The collector is action-local and has one ordered consumer; workers never race
-    /// on a shared counter.
+    /// Action-local collector retained by the shared replay protocol. Search assigns zero reserve,
+    /// so primary, nested, potion and EndTurn paths cannot add physical-identity supplements.
     /// </summary>
     private sealed class ChoiceOccurrenceCollector<TCandidate>(
         int finalReserve,
@@ -261,12 +257,6 @@ internal sealed partial class CombatBeamSolver
         }
         else
         {
-            // A live forced-death countdown makes later pile order a survival decision.
-            // Keep ordinary routing's existing semantic representatives outside that context.
-            choiceSpec = choiceSpec with
-            {
-                PreserveOrderedRoutingResidues = probeSnapshot.SandpitRemaining > 0,
-            };
             IReadOnlyList<PlanCardChoice> builtChoices = CardChoiceSupport.BuildChoices(
                 choiceSpec,
                 displayNames,
@@ -541,32 +531,10 @@ internal sealed partial class CombatBeamSolver
     {
         if (semanticFinalQuota < 1)
             throw new ArgumentOutOfRangeException(nameof(semanticFinalQuota));
-        int maximumFinalQuota = semanticFinalQuota
-            > int.MaxValue - CardChoiceSupport.MaximumIdentityOccurrenceReservedBranches
-                ? int.MaxValue
-                : semanticFinalQuota
-                    + CardChoiceSupport.MaximumIdentityOccurrenceReservedBranches;
-        int totalReplayAttemptQuota = ResolveFiniteChoiceReplayAttemptLimit(maximumFinalQuota);
-
-        // Semantic decisions always receive the capped attempt budget first. Only genuine cap
-        // headroom is reserved for the later physical-occurrence pass, so a 600-way semantic
-        // layer under the 512 hard cap keeps 512 different decisions and zero supplements.
-        int minimumSemanticAttempts = Math.Min(
-            semanticFinalQuota,
-            totalReplayAttemptQuota);
-        int occurrenceReplayAttemptQuota = Math.Min(
-            CardChoiceSupport.MaximumIdentityOccurrenceReservedBranches * 4,
-            totalReplayAttemptQuota - minimumSemanticAttempts);
-        int occurrenceFinalReserve = Math.Min(
-            CardChoiceSupport.MaximumIdentityOccurrenceReservedBranches,
-            occurrenceReplayAttemptQuota);
+        // All replay attempts belong to distinct semantic decisions. No occurrence reserve.
         return new WholeActionChoiceBudget(
-            new ChoiceSearchBudget(
-                semanticFinalQuota,
-                materializedOccurrenceFinalQuota: 0,
-                totalReplayAttemptQuota - occurrenceReplayAttemptQuota),
-            occurrenceFinalReserve,
-            occurrenceReplayAttemptQuota);
+            new ChoiceSearchBudget(semanticFinalQuota, materializedOccurrenceFinalQuota: 0,
+                ResolveFiniteChoiceReplayAttemptLimit(semanticFinalQuota)), 0, 0);
     }
 
     private static ChoiceSearchBudget? CreateChoiceBranchBudgetCore(
@@ -725,23 +693,12 @@ internal sealed partial class CombatBeamSolver
         ChoiceOccurrenceCollector<int> nestedCollector = new(
             nestedWholeAction.OccurrenceFinalReserve,
             nestedWholeAction.OccurrenceReplayAttemptQuota);
-        // A/B and the next non-identity layer merely carry the action-local collector. Only the
-        // later C frontier registers physical branches, so fixed outer-token preallocation cannot
-        // accidentally starve it.
-        if (nestedCollector.RemainingFinalReserve != 2)
-            throw new InvalidOperationException("非身份层提前消耗了 occurrence reserve。");
         nestedCollector.Collect(1);
         nestedCollector.Collect(2);
-        IReadOnlyList<int> nestedBranches = nestedCollector.Seal();
-        nestedCollector.Collect(3);
-        if (nestedBranches.Count != 2
-            || !nestedBranches.SequenceEqual([1, 2])
-            || nestedCollector.RemainingFinalReserve != 0
-            || nestedCollector.ReplayAttemptQuota <= 0)
-        {
-            throw new InvalidOperationException(
-                "nested identity 的全 action reserve 被预分丢失、跨层累加或突破 attempt 上限。");
-        }
+        if (nestedWholeAction.OccurrenceFinalReserve != 0
+            || nestedWholeAction.OccurrenceReplayAttemptQuota != 0
+            || nestedCollector.Seal().Count != 0)
+            throw new InvalidOperationException("Nested choices retained physical-occurrence supplements.");
 
         foreach (int semanticQuota in new[] { 1, 2, 3, 127, 510, 511, 512, 600 })
         {

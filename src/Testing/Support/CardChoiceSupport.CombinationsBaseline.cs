@@ -10,7 +10,7 @@ using CombatSolver.Engine.InCombat.Simulation;
 
 namespace CombatSolver;
 
-// Pre-optimization enumeration, with an independent ordered-routing residue oracle.
+// Independent combination enumeration for the canonical-only search policy.
 // Unchanged scoring/identity helpers are shared.
 internal static partial class CardChoiceSupport
 {
@@ -57,19 +57,6 @@ internal static partial class CardChoiceSupport
         string[] orderedSemanticKeys = ordered
             .Select(ChoiceCardKey)
             .ToArray();
-        if (spec.PreserveOrderedRoutingResidues && exactSingleCardRouting
-            && spec.Effect is PlanChoiceEffect.MoveToHand or PlanChoiceEffect.MoveToDrawTop
-                or PlanChoiceEffect.MoveToHandFreeThisTurn
-            && spec.SourcePile is PileType.Draw or PileType.Discard or PileType.Exhaust)
-        {
-            orderedSemanticKeys = ordered.Select(selected =>
-            {
-                int removed = spec.SourceCards.ToList().FindIndex(card => ReferenceEquals(card, selected));
-                if (removed < 0) throw new InvalidOperationException("Routing option is absent from its source.");
-                return ChoiceCardKey(selected) + JsonSerializer.Serialize(spec.SourceCards
-                    .Where((_, index) => index != removed).Select(ChoiceCardKey));
-            }).ToArray();
-        }
         List<IReadOnlyList<PredictedCard>> selections = [];
         List<IReadOnlyList<PredictedCard>> cardinalityRepresentatives = [];
         for (int take = minTake; take <= maxTake; take++)
@@ -103,21 +90,7 @@ internal static partial class CardChoiceSupport
                 .Take(effectiveBranchLimit - retained.Count));
         }
 
-        if (IsIdentityChangingPersistentChoiceEffect(spec.Effect))
-        {
-            ReserveIdentityOccurrenceRepresentatives(
-                spec,
-                retained,
-                effectiveBranchLimit,
-                MaximumIdentityOccurrenceReservedBranches);
-        }
-
-        IEnumerable<IReadOnlyList<PredictedCard>> orderedRetained = retained
-            .OrderByDescending(selection => ChoicePriority(spec, selection));
-        if (IsIdentityChangingPersistentChoiceEffect(spec.Effect))
-            orderedRetained = OrderSemanticSelectionsBeforeOccurrenceSupplements(orderedRetained);
-
-        return orderedRetained
+        return retained.OrderByDescending(selection => ChoicePriority(spec, selection))
             .Take(spec.MaxBranches ?? int.MaxValue)
             .Select(selection => new PlanCardChoice(
                 spec.Effect,
@@ -170,62 +143,5 @@ internal static partial class CardChoiceSupport
                 return;
         }
     }
-
-    internal static void VerifyTailOccurrenceRepresentativeForTesting(
-        IReadOnlyList<PredictedCard> selection, IReadOnlyList<PredictedCard> options)
-    {
-        var expected = BuildTailOccurrenceRepresentativeBaselineForTesting(selection, options);
-        var actual = BuildTailOccurrenceRepresentative(selection, options);
-        if (expected is null ? actual is not null
-            : actual is null || !SamePhysicalSelection(expected, actual))
-            throw new InvalidOperationException("Tail occurrence representative changed physical identity/order.");
-    }
-
-    private static IReadOnlyList<PredictedCard>? BuildTailOccurrenceRepresentativeBaselineForTesting(
-        IReadOnlyList<PredictedCard> selection,
-        IReadOnlyList<PredictedCard> options)
-    {
-        if (selection.Count == 0)
-            return null;
-
-        Dictionary<string, int> selectedCounts = new(StringComparer.Ordinal);
-        foreach (PredictedCard card in selection)
-        {
-            string key = ChoiceCardKey(card);
-            selectedCounts[key] = selectedCounts.GetValueOrDefault(key) + 1;
-        }
-
-        Dictionary<string, PredictedCard[]> tailByKey = new(StringComparer.Ordinal);
-        bool hasDifferentRepresentative = false;
-        foreach ((string key, int count) in selectedCounts)
-        {
-            PredictedCard[] equivalentOptions = options
-                .Where(option => string.Equals(ChoiceCardKey(option), key, StringComparison.Ordinal))
-                .ToArray();
-            if (equivalentOptions.Length < count)
-                return null;
-
-            PredictedCard[] tail = equivalentOptions[^count..];
-            tailByKey[key] = tail;
-            PredictedCard[] selectedForKey = selection
-                .Where(card => string.Equals(ChoiceCardKey(card), key, StringComparison.Ordinal))
-                .ToArray();
-            hasDifferentRepresentative |= !SamePhysicalSelection(selectedForKey, tail);
-        }
-        if (!hasDifferentRepresentative)
-            return null;
-
-        Dictionary<string, int> offsets = new(StringComparer.Ordinal);
-        PredictedCard[] representative = new PredictedCard[selection.Count];
-        for (int index = 0; index < selection.Count; index++)
-        {
-            string key = ChoiceCardKey(selection[index]);
-            int offset = offsets.GetValueOrDefault(key);
-            representative[index] = tailByKey[key][offset];
-            offsets[key] = offset + 1;
-        }
-        return representative;
-    }
-
 
 }

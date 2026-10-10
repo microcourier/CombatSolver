@@ -722,7 +722,7 @@ internal sealed partial class UnattendedTestRunner
             }
             if (snapshots.Any(snapshot => snapshot.PocketwatchCardThreshold < 0)
                 || snapshots.Select(snapshot => snapshot.StateKey).Distinct().Count() < 8
-                || snapshots.Select(snapshot => snapshot.ProjectedShuffleOrderKey).Distinct().Count() < 8)
+)
                 throw new InvalidOperationException("Narrow retention fixture did not produce eight distinct Pocketwatch pile orders.");
             driver.VerifyNarrowOrderedPileCapacityForTesting(snapshots);
         }

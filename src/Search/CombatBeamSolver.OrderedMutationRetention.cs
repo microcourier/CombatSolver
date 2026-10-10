@@ -402,8 +402,6 @@ internal sealed partial class CombatBeamSolver
         key.Add(node.Snapshot.ShufflesCrossed);
         key.Add(tacticalKey.First);
         key.Add(tacticalKey.Second);
-        key.Add(node.Snapshot.ProjectedShuffleOrderKey.First);
-        key.Add(node.Snapshot.ProjectedShuffleOrderKey.Second);
         return key.Finish();
     }
 

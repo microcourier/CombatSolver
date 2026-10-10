@@ -114,10 +114,6 @@ internal sealed partial class CombatBeamSolver
             processedEnemyDeaths);
         StateFingerprint unorderedPileKey = BuildUnorderedPileKey(playerState);
         StateFingerprint cyclePileShapeKey = BuildCyclePileShapeKey(playerState);
-        SearchMeasurement projectedShuffleMeasurement = _run.Performance.Begin();
-        // Projected shuffle needs these piles in this exact pre-sort order. The remaining
-        // snapshot metrics are order-independent, so they can reuse the shuffled list instead
-        // of materializing a second deck-sized backing array.
         using SnapshotListBuffer<PredictedCard>.Lease liveCardsLease =
             _run.SnapshotLiveCards.Rent();
         List<PredictedCard> liveCards = liveCardsLease.Items;
@@ -126,12 +122,7 @@ internal sealed partial class CombatBeamSolver
         liveCards.AddRange(playerState.DiscardPile.Cards);
         liveCards.AddRange(playerState.DrawPile.Cards);
         liveCards.AddRange(playerState.Hand.Cards);
-        (StateFingerprint projectedShuffleOrderKey, int projectedShuffleOrderValue) =
-            BuildProjectedShuffleOrder(simulator, liveCards);
         int liveCardCount = liveCards.Count;
-        _run.Performance.End(
-            SearchMetricPhase.ProjectedShuffle,
-            projectedShuffleMeasurement);
         _run.Performance.End(SearchMetricPhase.Fingerprint, fingerprintMeasurement);
 
         int roundIndex = turn - _startTurnNumber;
@@ -533,8 +524,6 @@ internal sealed partial class CombatBeamSolver
             key,
             unorderedPileKey,
             cycleShapeKey,
-            projectedShuffleOrderKey,
-            projectedShuffleOrderValue,
             risk,
             dead,
             won,
@@ -899,31 +888,6 @@ internal sealed partial class CombatBeamSolver
         unordered.Add(pile.Cards.Count);
         unordered.Add(first);
         unordered.Add(second);
-    }
-
-    private (StateFingerprint Key, int Value) BuildProjectedShuffleOrder(
-        CombatPredictionSimulator simulator,
-        List<PredictedCard> cards)
-    {
-        // StableShuffle sorts a second List copy before shuffling. This list is already private
-        // to the snapshot, so performing the same sort and shuffle in place avoids
-        // another deck-sized backing array without changing RNG consumption or ordering.
-        var shuffleRng = simulator.Rng.ShuffleState.ToRng();
-        StableShuffleProjection(cards, shuffleRng);
-
-        StateFingerprintBuilder key = new();
-        key.Add(simulator.Rng.ShuffleState.Counter);
-        key.Add(cards.Count);
-        int value = 0;
-        for (int index = 0; index < cards.Count; index++)
-        {
-            StateFingerprint cardKey = BuildCardStateFingerprint(cards[index]);
-            key.Add(cardKey.First);
-            key.Add(cardKey.Second);
-            value += (int)Math.Round(
-                CardChoiceSupport.CardValue(cards[index].Preview) * (cards.Count - index));
-        }
-        return (key.Finish(), value);
     }
 
     internal static void StableShuffleProjection(

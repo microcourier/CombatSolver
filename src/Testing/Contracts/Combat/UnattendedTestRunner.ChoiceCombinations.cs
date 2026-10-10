@@ -13,7 +13,7 @@ internal sealed partial class UnattendedTestRunner
 {
     private static string AssertChoiceCombinationContract(Player player, SolverDisplayNames names)
     {
-        // Recovering either adjacent copy leaves the same pile; the separated copy does not.
+        // Distinct physical positions share one canonical representative, even when residues differ.
         PredictedCard first = PredictedCard.Create(CanonicalModels.Card<StrikeIronclad>(), player);
         PredictedCard adjacent = PredictedCard.Create(CanonicalModels.Card<StrikeIronclad>(), player);
         PredictedCard separator = PredictedCard.Create(CanonicalModels.Card<DefendIronclad>(), player);
@@ -23,17 +23,23 @@ internal sealed partial class UnattendedTestRunner
         foreach (PlanChoiceEffect effect in new[] {PlanChoiceEffect.MoveToHand, PlanChoiceEffect.MoveToDrawTop,
                      PlanChoiceEffect.MoveToHandFreeThisTurn})
         {
-            CardChoiceSpec routing = new(effect, pile, 1, 1, routingPile, routingPile, 0,
-                PreserveOrderedRoutingResidues:true);
+            CardChoiceSpec routing = new(effect, pile, 1, 1, routingPile, routingPile, 0);
             var choices = CardChoiceSupport.BuildChoices(routing, names, 1, 1);
             int[] occurrences = choices.Where(choice => choice.Cards.Single().CardId == "STRIKE_IRONCLAD")
                 .Select(choice => choice.Cards.Single().SourceOccurrence).Order().ToArray();
-            if (choices.Count != 3 || !occurrences.SequenceEqual(new[] {0,2}))
-                throw new InvalidOperationException("Ordered routing merged separate residues or expanded adjacent equivalents.");
-            if (CardChoiceSupport.BuildChoices(routing with {MaxBranches=2},names,1,1).Count != 2)
-                throw new InvalidOperationException("Ordered routing ignored its explicit branch cap.");
-            if (CardChoiceSupport.BuildChoices(routing with {PreserveOrderedRoutingResidues=false},names,1,1).Count != 2)
-                throw new InvalidOperationException("Ordinary routing changed its existing semantic representatives.");
+            if (choices.Count != 2 || !occurrences.SequenceEqual(new[] {0}))
+                throw new InvalidOperationException("Routing retained extra representatives for equivalent cards.");
+            if (CardChoiceSupport.BuildChoices(routing with {MaxBranches=1},names,1,1).Count != 1)
+                throw new InvalidOperationException("Routing ignored its explicit branch cap.");
+        }
+        foreach (PlanChoiceEffect effect in new[] {PlanChoiceEffect.Upgrade, PlanChoiceEffect.Exhaust,
+                     PlanChoiceEffect.Transform, PlanChoiceEffect.Duplicate, PlanChoiceEffect.Modify,
+                     PlanChoiceEffect.Nightmare, PlanChoiceEffect.SetFreeThisCombat})
+        {
+            CardChoiceSpec spec = new(effect, PileType.Hand, 1, 1, routingPile, routingPile, 0);
+            var choices = CardChoiceSupport.BuildChoices(spec, names, 8, 8);
+            if (choices.Count != 2 || choices.Any(choice => choice.Cards.Single().SourceOccurrence != 0))
+                throw new InvalidOperationException("Persistent choice retained a physical-occurrence supplement.");
         }
         PredictedCard[] cards = Enumerable.Range(0, 20).Select(index =>
             PredictedCard.Create(index % 2 == 0 ? CanonicalModels.Card<StrikeIronclad>()
@@ -64,16 +70,8 @@ internal sealed partial class UnattendedTestRunner
                 trial % 3 == 0 ? PileType.Hand : trial % 3 == 1 ? PileType.Draw : PileType.Discard,
                 minimum, maximum, options, source, trial % 5 - 2,
                 ContextId: "combination-contract", MaxBranches: trial % 7 == 0 ? trial % 5 : null,
-                IsImplicitAllSelection: trial % 19 == 0,
-                PreserveOrderedRoutingResidues:trial % 2==0);
+                IsImplicitAllSelection: trial % 19 == 0);
             int limit = 1 + trial % 17;
-            CardChoiceSupport.VerifyTailOccurrenceRepresentativeForTesting(
-                options.Reverse().Take(maximum).ToArray(), options);
-            CardChoiceSupport.VerifyTailOccurrenceRepresentativeForTesting(
-                cards.Take(maximum).ToArray(), options);
-            if (count > 128)
-                CardChoiceSupport.VerifyTailOccurrenceRepresentativeForTesting(
-                    options.Reverse().Take(count / 2).ToArray(), options);
             IReadOnlyList<PlanCardChoice> expected = CardChoiceSupport.BuildChoicesBaselineForTesting(spec, names, limit, limit);
             IReadOnlyList<PlanCardChoice> actual = CardChoiceSupport.BuildChoices(spec, names, limit, limit);
             if (JsonSerializer.Serialize(expected) != JsonSerializer.Serialize(actual))

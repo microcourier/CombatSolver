@@ -263,7 +263,7 @@ internal sealed partial class CombatBeamSolver
                         snapshot.FutureResourceValue, snapshot.DelayedDamageValue, snapshot.ReactiveDamageValue,
                         snapshot.EnemyStrengthSuppression, snapshot.EnemyWeakTurns, snapshot.EnemyVulnerableTurns,
                         snapshot.SandpitRemaining, snapshot.FocusTargetPressure,
-                        snapshot.ProjectedShuffleOrderValue, snapshot.LongTermResourceValue)),
+                        snapshot.LongTermResourceValue)),
             });
         }
     }

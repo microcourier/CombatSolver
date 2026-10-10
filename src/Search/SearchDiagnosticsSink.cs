@@ -99,7 +99,6 @@ internal readonly record struct SearchPathEvaluationValues(
     int EnemyVulnerableTurns,
     int SandpitRemaining,
     int FocusTargetPressure,
-    int ProjectedShuffleOrderValue,
     int LongTermResourceValue);
 
 // All indexes, including RawRank, are zero-based; null means absent or not evaluated.
